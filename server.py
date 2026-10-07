@@ -1010,7 +1010,7 @@ async def handle_submit_deposit(request):
         return web.json_response({"error": str(e)}, status=500)
 
 async def start_discord_bot(app):
-    bot_token = os.environ.get("DISCORD_BOT_TOKEN", "MTU1NzE0MzUxODIwMjMwMjU3Nw.GzxOwP.lB3ukvgxZwxS5S9gFBciwi22k1KUium3uyXg6I")
+    bot_token = os.environ.get("DISCORD_BOT_TOKEN")
     if bot_token:
         try:
             from discord_bot import bot
