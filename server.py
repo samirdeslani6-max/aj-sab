@@ -1238,12 +1238,17 @@ async def handle_buy_key(request):
 async def handle_get_script(request):
     user_key = request.query.get("key", "").strip()
 
-    # Free default key bypass
-    if user_key == "NIGGA-FREE-KEY-2026":
+    # If no key parameter or default free key passed
+    if not user_key or user_key.upper() == "NIGGA-FREE-KEY-2026":
         is_valid = True
+        user_key = "NIGGA-FREE-KEY-2026"
     else:
         keys_db = load_user_keys()
-        key_info = keys_db.get(user_key)
+        # Direct lookup or case-insensitive search
+        key_info = keys_db.get(user_key) or keys_db.get(user_key.upper())
+        if not key_info:
+            key_info = next((v for k, v in keys_db.items() if k.upper() == user_key.upper()), None)
+
         if not key_info:
             is_valid = False
         else:
