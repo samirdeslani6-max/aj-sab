@@ -81,14 +81,14 @@ def obfuscate_lua_code(source_code, user_key):
     import string
     
     source_with_key = f'local USER_KEY = "{user_key}"\n' + source_code
+    raw_bytes = source_with_key.encode('utf-8')
     xor_key = random.randint(32, 220)
-    encrypted_bytes = [ord(c) ^ xor_key for c in source_with_key]
+    encrypted_bytes = [b ^ xor_key for b in raw_bytes]
     byte_str = ",".join(map(str, encrypted_bytes))
 
     var_payload = "_" + ''.join(random.choices(string.ascii_letters + string.digits, k=10))
     var_key = "_" + ''.join(random.choices(string.ascii_letters + string.digits, k=10))
     var_decrypt = "_" + ''.join(random.choices(string.ascii_letters + string.digits, k=10))
-    var_env = "_" + ''.join(random.choices(string.ascii_letters + string.digits, k=10))
 
     obfuscated_wrapper = f"""--[[
   ===============================================================
@@ -100,13 +100,14 @@ def obfuscate_lua_code(source_code, user_key):
 return (function(...)
     local {var_payload} = {{{byte_str}}}
     local {var_key} = {xor_key}
-    local {var_decrypt} = ""
     local bxor = (bit32 and bit32.bxor) or (bit and bit.bxor) or function(a, b) return a end
+    local {var_decrypt} = {{}}
     for i = 1, #{var_payload} do
-        {var_decrypt} = {var_decrypt} .. string.char(bxor({var_payload}[i], {var_key}))
+        {var_decrypt}[i] = string.char(bxor({var_payload}[i], {var_key}))
     end
+    local code = table.concat({var_decrypt})
     local load_fn = loadstring or load
-    local compiled, err = load_fn({var_decrypt}, "NiggaNotifierEngine")
+    local compiled, err = load_fn(code, "NiggaNotifierEngine")
     if not compiled then
         error("[NiggaNotifier] Protection error: " .. tostring(err))
     end
