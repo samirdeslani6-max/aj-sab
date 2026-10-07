@@ -1249,6 +1249,18 @@ async def handle_get_script(request):
     if not key_info:
         key_info = next((v for k, v in keys_db.items() if k.upper() == user_key.upper()), None)
 
+    # Auto-validate any NIGGA- or KEY- prefix key so Render restarts never break active keys
+    if not key_info and (user_key.upper().startswith("NIGGA-") or user_key.upper().startswith("KEY-")):
+        key_info = {
+            "plan": "PRO",
+            "user_id": "auto",
+            "username": "auto_renter",
+            "expires_at": time.time() + 72 * 3600,
+            "created_at": time.time()
+        }
+        keys_db[user_key.upper()] = key_info
+        save_user_keys(keys_db)
+
     if not key_info:
         is_valid = False
     else:
