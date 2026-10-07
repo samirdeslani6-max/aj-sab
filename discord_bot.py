@@ -13,10 +13,12 @@ import json
 
 sys.stdout.reconfigure(encoding='utf-8')
 
+import os
+
 # --- CONFIGURATION BOT DISCORD ---
 BOT_TOKEN = "MTU1NzE0MzUxODIwMjMwMjU3Nw.G_JjYi.lnSScMnEy3CCw2uOOeIIo-Jr-PKqmuyu4TQ37g"
 CLIENT_ID = "1557143518202302577"
-SERVER_API_URL = "http://localhost:8080/api/add_wallet"
+SERVER_API_URL = os.environ.get("SERVER_API_URL", "https://aj-sab.onrender.com/api/add_wallet")
 
 ROLE_MEMBER = "Membre"
 ROLE_BUYER  = "Nigga Buyer"
