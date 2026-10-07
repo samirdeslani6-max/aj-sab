@@ -825,6 +825,8 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                                 >
                                     {isSubmittingDeposit ? '🔍 Verifying Transaction...' : 'Verify Transaction & Submit Deposit'}
                                 </button>
+                            </div>
+                        </div>
                     )}
 
                     {/* KEY PURCHASED MODAL WITH PROTECTED LOADSTRING */}
