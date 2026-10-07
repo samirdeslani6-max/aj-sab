@@ -23,6 +23,70 @@ DISCORD_CLIENT_ID = "1557143518202302577"
 CLIENTS = set()
 STATS = {"total_steals": 0, "og_steals": 0, "super_steals": 0, "revenue_usd": 0}
 
+LTC_DEPOSIT_ADDRESS = "LcE7XVR5xQaU8EsWfpQpyDexciHutggGaN"
+WALLETS_FILE = "user_wallets.json"
+PROCESSED_TX_FILE = "processed_txids.json"
+
+def load_wallets():
+    if os.path.exists(WALLETS_FILE):
+        try:
+            with open(WALLETS_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return {}
+    return {}
+
+def save_wallets(data):
+    try:
+        with open(WALLETS_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+    except Exception as e:
+        print(f"[!] Save wallets error: {e}")
+
+def load_processed_txids():
+    if os.path.exists(PROCESSED_TX_FILE):
+        try:
+            with open(PROCESSED_TX_FILE, "r", encoding="utf-8") as f:
+                return set(json.load(f))
+        except Exception:
+            return set()
+    return set()
+
+def save_processed_txids(txids_set):
+    try:
+        with open(PROCESSED_TX_FILE, "w", encoding="utf-8") as f:
+            json.dump(list(txids_set), f, indent=2)
+    except Exception as e:
+        print(f"[!] Save processed txids error: {e}")
+
+def check_ltc_blockchain_tx(txid):
+    if not txid or len(str(txid).strip()) < 20:
+        return False, 0.0
+
+    processed = load_processed_txids()
+    clean_txid = str(txid).strip().lower()
+    if clean_txid in processed:
+        return False, 0.0
+
+    url = f"https://api.blockcypher.com/v1/ltc/main/txs/{clean_txid}"
+    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+    try:
+        with urllib.request.urlopen(req, timeout=6) as resp:
+            data = json.loads(resp.read().decode('utf-8'))
+            outputs = data.get("outputs", [])
+            for out in outputs:
+                addresses = out.get("addresses", [])
+                if LTC_DEPOSIT_ADDRESS in addresses:
+                    satoshis = out.get("value", 0)
+                    ltc_val = satoshis / 100000000.0
+                    processed.add(clean_txid)
+                    save_processed_txids(processed)
+                    return True, ltc_val
+    except Exception as e:
+        print(f"[!] LTC API Verification warning: {e}")
+
+    return False, 0.0
+
 # Tier Filtering System
 EXCLUDED_FARMER_KEYWORDS = {"dragon", "secret", "celestial", "hydra", "headless", "phoenix", "kraken", "cerberus", "eviledon", "signor carapace", "og", "rainbow", "dark matter"}
 
@@ -95,7 +159,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
             const [stealFeed, setStealFeed] = useState([]);
             const [stats, setStats] = useState({ clients: 0, total_steals: 0, og_steals: 0, super_steals: 0 });
             const [showPaymentModal, setShowPaymentModal] = useState(false);
-            const [selectedCrypto, setSelectedCrypto] = useState("BTC");
+            const [selectedCrypto, setSelectedCrypto] = useState("LTC");
             const [selectedHours, setSelectedHours] = useState(1);
             const [keyTimer, setKeyTimer] = useState(3600);
             const [activeKey, setActiveKey] = useState("NIGGA-FREE-KEY-2026");
@@ -104,6 +168,29 @@ DASHBOARD_HTML = """<!DOCTYPE html>
             const [usernameInput, setUsernameInput] = useState("look");
             const [avatarUrlInput, setAvatarUrlInput] = useState("https://cdn.discordapp.com/embed/avatars/0.png");
             const [discordIdInput, setDiscordIdInput] = useState("285828205162528768");
+
+            // Deposit Modal fields
+            const [depositAmountInput, setDepositAmountInput] = useState(8.00);
+            const [depositTxInput, setDepositTxInput] = useState("");
+            const [depositStatusMsg, setDepositStatusMsg] = useState({ text: "", type: "info" });
+            const [isSubmittingDeposit, setIsSubmittingDeposit] = useState(false);
+
+            // Fetch Real User Balance
+            const fetchBalance = async () => {
+                const id = discordUser ? discordUser.id : discordIdInput;
+                const name = discordUser ? discordUser.username : usernameInput;
+                try {
+                    const res = await fetch(`/api/get_balance?user_id=${encodeURIComponent(id)}&username=${encodeURIComponent(name)}`);
+                    const data = await res.json();
+                    if (data.balance !== undefined) {
+                        setWalletBalance(data.balance);
+                    }
+                } catch(e){}
+            };
+
+            useEffect(() => {
+                fetchBalance();
+            }, [discordUser, usernameInput, discordIdInput]);
 
             // Key countdown timer effect
             useEffect(() => {
@@ -159,6 +246,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                                 if (data.steal_data) {
                                     addSteal(data.steal_data);
                                 }
+                                fetchBalance();
                             }
                         } catch(e){}
                     };
@@ -187,27 +275,56 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                 return `${h.toString().padStart(2, '0')}h ${m.toString().padStart(2, '0')}m ${s.toString().padStart(2, '0')}s`;
             };
 
-            const simulateCryptoPayment = async (planName, priceUsd) => {
-                const tx = "0x" + Math.random().toString(36).substring(2, 15);
+            const submitDepositRequest = async () => {
+                if (selectedCrypto === 'LTC' && !depositTxInput) {
+                    setDepositStatusMsg({ text: "❌ Please enter your Litecoin Transaction Hash (TxID)!", type: "error" });
+                    return;
+                }
+                setIsSubmittingDeposit(true);
+                setDepositStatusMsg({ text: "🔍 Verifying transaction...", type: "info" });
+
                 try {
-                    await fetch('/api/payment_notify', {
+                    const res = await fetch('/api/submit_deposit', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
                             discord_user: discordUser ? discordUser.username : usernameInput,
-                            plan: planName,
-                            duration_hours: selectedHours,
-                            price: priceUsd * selectedHours,
-                            crypto: selectedCrypto,
-                            tx_hash: tx
+                            discord_id: discordUser ? discordUser.id : discordIdInput,
+                            method: selectedCrypto,
+                            amount: depositAmountInput,
+                            txid: depositTxInput
                         })
                     });
-                } catch(e){}
+                    const data = await res.json();
+                    if (data.status === 'approved') {
+                        setWalletBalance(data.new_balance);
+                        setDepositStatusMsg({ text: data.message, type: "success" });
+                    } else {
+                        setDepositStatusMsg({ text: data.message, type: "info" });
+                    }
+                } catch(e) {
+                    setDepositStatusMsg({ text: "❌ Error connecting to server. Please try again.", type: "error" });
+                } finally {
+                    setIsSubmittingDeposit(false);
+                }
+            };
 
-                setWalletBalance(prev => prev + (priceUsd * selectedHours));
+            const rentSubscriptionKey = (planName, pricePerHour) => {
+                const totalPrice = pricePerHour * selectedHours;
+                if (walletBalance < totalPrice) {
+                    setShowPaymentModal(true);
+                    setDepositStatusMsg({ 
+                        text: `⚠️ Insufficient Balance! You need $${totalPrice.toFixed(2)} USD to rent ${planName} (${selectedHours}h). Please deposit funds below.`, 
+                        type: "error" 
+                    });
+                    return;
+                }
+
+                // Deduct balance
+                setWalletBalance(prev => prev - totalPrice);
                 setActivePlan(`${planName} (${selectedHours}h)`);
                 setKeyTimer(prev => prev + (selectedHours * 3600));
-                setShowPaymentModal(false);
+                alert(`✅ Key Purchased Successfully! Plan: ${planName} (${selectedHours}h). Your balance updated.`);
             };
 
             return (
@@ -387,7 +504,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                                         </ul>
                                     </div>
                                     <button 
-                                        onClick={() => setShowPaymentModal(true)}
+                                        onClick={() => rentSubscriptionKey("FARMER", 2.00)}
                                         className="w-full py-2 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold rounded-lg transition"
                                     >
                                         Rent Key
@@ -407,7 +524,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                                         </ul>
                                     </div>
                                     <button 
-                                        onClick={() => setShowPaymentModal(true)}
+                                        onClick={() => rentSubscriptionKey("LOWLIGHT", 4.00)}
                                         className="w-full py-2 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold rounded-lg transition"
                                     >
                                         Rent Key
@@ -427,7 +544,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                                         </ul>
                                     </div>
                                     <button 
-                                        onClick={() => setShowPaymentModal(true)}
+                                        onClick={() => rentSubscriptionKey("PRO", 8.00)}
                                         className="w-full py-2 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold rounded-lg transition"
                                     >
                                         Rent Key
@@ -447,7 +564,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                                         </ul>
                                     </div>
                                     <button 
-                                        onClick={() => setShowPaymentModal(true)}
+                                        onClick={() => rentSubscriptionKey("ULTRALIGHT", 12.00)}
                                         className="w-full py-2 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold rounded-lg transition"
                                     >
                                         Rent Key
@@ -539,18 +656,13 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                                 <h3 className="text-sm font-bold text-white mb-3">💳 Top Up Balance & Select Key Duration</h3>
                                 
                                 <div className="mb-4">
-                                    <label className="text-xs font-bold text-gray-300 block mb-1">Duration (Hours):</label>
-                                    <select 
-                                        value={selectedHours} 
-                                        onChange={(e) => setSelectedHours(Number(e.target.value))}
-                                        className="w-full bg-[#121420] border border-gray-800 rounded-xl p-2.5 text-xs text-white focus:outline-none"
-                                    >
-                                        <option value={1}>1 Hour Key ($8.00)</option>
-                                        <option value={2}>2 Hours Key ($16.00)</option>
-                                        <option value={6}>6 Hours Key ($48.00)</option>
-                                        <option value={12}>12 Hours Key ($96.00)</option>
-                                        <option value={24}>24 Hours Key ($192.00)</option>
-                                    </select>
+                                    <label className="text-xs font-bold text-gray-300 block mb-1">Deposit Amount ($USD):</label>
+                                    <input 
+                                        type="number" 
+                                        value={depositAmountInput} 
+                                        onChange={(e) => setDepositAmountInput(Number(e.target.value))}
+                                        className="w-full bg-[#121420] border border-gray-800 rounded-xl p-2.5 text-xs text-white focus:outline-none focus:border-blue-500 font-mono"
+                                    />
                                 </div>
 
                                 <p className="text-xs text-gray-400 mb-2">Select Payment Method:</p>
@@ -571,33 +683,57 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                                 </div>
 
                                 {selectedCrypto === 'LTC' ? (
-                                    <div className="bg-[#121420] p-3 rounded-xl border border-gray-800 mb-4 text-center">
-                                        <p className="text-[10px] text-gray-400 mb-1">Litecoin (LTC) Deposit Address:</p>
-                                        <p className="text-xs font-mono font-bold text-emerald-400 break-all select-all p-2 bg-[#0a0b10] rounded-lg border border-emerald-500/30">
-                                            LcE7XVR5xQaU8EsWfpQpyDexciHutggGaN
-                                        </p>
+                                    <div className="space-y-3 mb-4">
+                                        <div className="bg-[#121420] p-3 rounded-xl border border-gray-800 text-center">
+                                            <p className="text-[10px] text-gray-400 mb-1">Send LTC to Litecoin Address:</p>
+                                            <p className="text-xs font-mono font-bold text-emerald-400 break-all select-all p-2 bg-[#0a0b10] rounded-lg border border-emerald-500/30">
+                                                LcE7XVR5xQaU8EsWfpQpyDexciHutggGaN
+                                            </p>
+                                        </div>
+                                        <div>
+                                            <label className="text-xs font-bold text-gray-300 block mb-1">Enter LTC Transaction Hash (TxID):</label>
+                                            <input 
+                                                type="text"
+                                                placeholder="e.g. 5a1b2c3d4e..."
+                                                value={depositTxInput}
+                                                onChange={(e) => setDepositTxInput(e.target.value)}
+                                                className="w-full bg-[#121420] border border-gray-800 rounded-xl p-2.5 text-xs text-white font-mono focus:outline-none focus:border-blue-500"
+                                            />
+                                        </div>
                                     </div>
                                 ) : (
-                                    <div className="bg-[#121420] p-3 rounded-xl border border-gray-800 mb-4 text-center">
-                                        <p className="text-[10px] text-gray-400 mb-1">PayPal Payment:</p>
-                                        <p className="text-xs font-bold text-blue-300 p-2 bg-[#0a0b10] rounded-lg border border-blue-500/30">
-                                            Open a Discord Support Ticket to pay via PayPal.
-                                        </p>
+                                    <div className="space-y-3 mb-4">
+                                        <div className="bg-[#121420] p-3 rounded-xl border border-gray-800 text-center">
+                                            <p className="text-[10px] text-gray-400 mb-1">PayPal Payment:</p>
+                                            <p className="text-xs font-bold text-blue-300 p-2 bg-[#0a0b10] rounded-lg border border-blue-500/30">
+                                                Open a Discord Support Ticket to receive PayPal details.
+                                            </p>
+                                        </div>
+                                        <div>
+                                            <label className="text-xs font-bold text-gray-300 block mb-1">PayPal TxID or Proof Note:</label>
+                                            <input 
+                                                type="text"
+                                                placeholder="e.g. PayPal Transaction # or Note..."
+                                                value={depositTxInput}
+                                                onChange={(e) => setDepositTxInput(e.target.value)}
+                                                className="w-full bg-[#121420] border border-gray-800 rounded-xl p-2.5 text-xs text-white focus:outline-none focus:border-blue-500"
+                                            />
+                                        </div>
                                     </div>
                                 )}
 
-                                <div className="bg-blue-950/40 border border-blue-500/30 p-3 rounded-xl mb-4 text-center">
-                                    <p className="text-xs text-blue-200 font-bold">📩 Payment Instructions (English):</p>
-                                    <p className="text-[11px] text-gray-300 mt-1">
-                                        After sending payment via LTC or PayPal, open a support ticket on Discord with your proof/TxID. The admin will credit your wallet balance immediately!
-                                    </p>
-                                </div>
+                                {depositStatusMsg.text && (
+                                    <div className={`p-3 rounded-xl text-xs font-bold mb-4 ${depositStatusMsg.type === 'success' ? 'bg-emerald-950/60 border border-emerald-500/50 text-emerald-300' : (depositStatusMsg.type === 'error' ? 'bg-red-950/60 border border-red-500/50 text-red-300' : 'bg-blue-950/60 border border-blue-500/50 text-blue-300')}`}>
+                                        {depositStatusMsg.text}
+                                    </div>
+                                )}
 
                                 <button 
-                                    onClick={() => simulateCryptoPayment("PRO", 8.00)}
-                                    className="w-full py-2.5 bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs rounded-xl shadow-lg transition"
+                                    onClick={submitDepositRequest}
+                                    disabled={isSubmittingDeposit}
+                                    className="w-full py-2.5 bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs rounded-xl shadow-lg transition flex items-center justify-center gap-2 disabled:opacity-50"
                                 >
-                                    Confirm Deposit Request & Notify Admin
+                                    {isSubmittingDeposit ? '🔍 Verifying Transaction...' : 'Verify Transaction & Submit Deposit'}
                                 </button>
                             </div>
                         </div>
@@ -784,6 +920,13 @@ async def handle_dashboard(request):
         return await websocket_handler(request)
     return web.Response(text=DASHBOARD_HTML, content_type="text/html", charset="utf-8")
 
+async def handle_get_balance(request):
+    user_id = request.query.get("user_id", "")
+    username = request.query.get("username", "")
+    wallets = load_wallets()
+    bal = wallets.get(str(user_id), wallets.get(str(username), 0.0))
+    return web.json_response({"balance": float(bal)})
+
 async def handle_payment_notify(request):
     try:
         data = await request.json()
@@ -803,19 +946,71 @@ async def handle_payment_notify(request):
 async def handle_add_wallet(request):
     try:
         data = await request.json()
-        user_id = data.get("user_id")
-        username = data.get("username", "Unknown")
-        amount = data.get("amount", 0.0)
+        user_id = str(data.get("user_id", ""))
+        username = str(data.get("username", "Unknown"))
+        amount = float(data.get("amount", 0.0))
         admin = data.get("admin", "Admin")
 
-        print(f"[WALLET API] Added ${amount:.2f} USD to user {username} (ID: {user_id}) by admin {admin}")
-        return web.json_response({"status": "ok", "message": "Wallet balance credited successfully"})
+        wallets = load_wallets()
+        key = user_id if user_id and user_id != "Unknown" else username
+        current_bal = wallets.get(key, 0.0)
+        new_bal = current_bal + amount
+        wallets[key] = new_bal
+        if username and username != key:
+            wallets[username] = new_bal
+        save_wallets(wallets)
+
+        print(f"[WALLET API] Added ${amount:.2f} USD to user {username} ({key}) by admin {admin}. New balance: ${new_bal:.2f}")
+
+        # Broadcast live wallet update to all connected dashboard websockets!
+        await broadcast_dashboard_update(f"Wallet updated: ${amount:.2f} credited to {username}")
+
+        return web.json_response({"status": "ok", "message": "Wallet balance credited successfully", "new_balance": new_bal})
     except Exception as e:
         print(f"[!] Error Wallet API: {e}")
         return web.json_response({"error": str(e)}, status=500)
 
+async def handle_submit_deposit(request):
+    try:
+        data = await request.json()
+        user_id = str(data.get("discord_id", ""))
+        username = str(data.get("discord_user", "Unknown"))
+        method = str(data.get("method", "LTC")).upper()
+        amount = float(data.get("amount", 8.0))
+        txid = str(data.get("txid", "")).strip()
+
+        # 1. Check LTC Blockchain Auto-Verification
+        if method == "LTC" and txid:
+            verified, ltc_val = check_ltc_blockchain_tx(txid)
+            if verified:
+                wallets = load_wallets()
+                key = user_id if user_id else username
+                new_bal = wallets.get(key, 0.0) + amount
+                wallets[key] = new_bal
+                if username and username != key:
+                    wallets[username] = new_bal
+                save_wallets(wallets)
+                
+                send_discord_payment_notification(username, "AUTO_BLOCKCHAIN_LTC", 1, amount, "LTC (Verified)", txid)
+                await broadcast_dashboard_update(f"LTC Auto Deposit Verified: ${amount:.2f} credited to {username}")
+                return web.json_response({
+                    "status": "approved", 
+                    "message": f"✅ LTC Transaction Verified on Blockchain! ${amount:.2f} USD added to your wallet.",
+                    "new_balance": new_bal
+                })
+
+        # 2. Manual / Pending Approval Notification for Admin
+        send_discord_payment_notification(username, "DEPOSIT_REQUEST", 1, amount, method, txid if txid else "No TxID provided")
+        return web.json_response({
+            "status": "pending",
+            "message": f"📩 Deposit Request of ${amount:.2f} USD submitted! Admin notified on Discord. Admin will verify your payment and run !5wallet to approve."
+        })
+    except Exception as e:
+        print(f"[!] Error Submit Deposit API: {e}")
+        return web.json_response({"error": str(e)}, status=500)
+
 async def start_discord_bot(app):
-    bot_token = os.environ.get("DISCORD_BOT_TOKEN", "MTU1NzE0MzUxODIwMjMwMjU3Nw.G8to_O.4ALhxhv3JMKVTL77ajlvCfT7GZx5GXxNwLA6bY")
+    bot_token = os.environ.get("DISCORD_BOT_TOKEN", "MTU1NzE0MzUxODIwMjMwMjU3Nw.GzxOwP.lB3ukvgxZwxS5S9gFBciwi22k1KUium3uyXg6I")
     if bot_token:
         try:
             from discord_bot import bot
@@ -830,6 +1025,8 @@ if __name__ == "__main__":
     app.on_startup.append(start_discord_bot)
     app.router.add_get('/', handle_dashboard)
     app.router.add_get('/ws', websocket_handler)
+    app.router.add_get('/api/get_balance', handle_get_balance)
+    app.router.add_post('/api/submit_deposit', handle_submit_deposit)
     app.router.add_post('/api/payment_notify', handle_payment_notify)
     app.router.add_post('/api/add_wallet', handle_add_wallet)
 

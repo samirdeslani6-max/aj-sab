@@ -16,7 +16,7 @@ sys.stdout.reconfigure(encoding='utf-8')
 import os
 
 # --- CONFIGURATION BOT DISCORD ---
-BOT_TOKEN = os.environ.get("DISCORD_BOT_TOKEN", "MTU1NzE0MzUxODIwMjMwMjU3Nw.G8to_O.4ALhxhv3JMKVTL77ajlvCfT7GZx5GXxNwLA6bY")
+BOT_TOKEN = os.environ.get("DISCORD_BOT_TOKEN", "MTU1NzE0MzUxODIwMjMwMjU3Nw.GzxOwP.lB3ukvgxZwxS5S9gFBciwi22k1KUium3uyXg6I")
 CLIENT_ID = "1557143518202302577"
 SERVER_API_URL = os.environ.get("SERVER_API_URL", "https://aj-sab.onrender.com/api/add_wallet")
 
@@ -88,48 +88,55 @@ async def on_message(message):
 @commands.has_permissions(administrator=True)
 async def cmd_5wallet(ctx, user_target: str, amount: float):
     """
-    Usage: !5wallet <user_id or mention> <amount>
-    Example: !5wallet 1234567890 50
+    Usage: !5wallet <user_id, @mention, or username> <amount>
+    Example: !5wallet @look 50  OR  !5wallet 285828205162528768 50
     """
-    # Extract User ID if mention is passed (@User)
-    user_id_clean = re.sub(r"[<@!>]", "", user_target)
+    user_id_clean = re.sub(r"[<@!>]", "", user_target).strip()
     
+    target_name = user_target.replace("@", "")
+    target_id = user_id_clean
+
     try:
-        target_user = await bot.fetch_user(int(user_id_clean))
-        target_name = target_user.name
-        target_id = target_user.id
+        if user_id_clean.isdigit():
+            target_user = await bot.fetch_user(int(user_id_clean))
+            target_name = target_user.name
+            target_id = str(target_user.id)
     except Exception:
-        target_name = f"User_{user_id_clean}"
-        target_id = user_id_clean
+        pass
 
-    # Notify local Master Python Server API
-    try:
-        payload = json.dumps({
-            "user_id": str(target_id),
-            "username": target_name,
-            "amount": amount,
-            "admin": ctx.author.name
-        }).encode('utf-8')
+    # Notify both local server and Render API endpoints
+    api_urls = [
+        "http://localhost:8080/api/add_wallet",
+        os.environ.get("SERVER_API_URL", "https://aj-sab.onrender.com/api/add_wallet")
+    ]
 
-        req = urllib.request.Request(
-            SERVER_API_URL, data=payload,
-            headers={"Content-Type": "application/json", "User-Agent": "Mozilla/5.0"}
-        )
-        with urllib.request.urlopen(req) as resp:
+    payload = json.dumps({
+        "user_id": target_id,
+        "username": target_name,
+        "amount": amount,
+        "admin": ctx.author.name
+    }).encode('utf-8')
+
+    for url in api_urls:
+        try:
+            req = urllib.request.Request(
+                url, data=payload,
+                headers={"Content-Type": "application/json", "User-Agent": "Mozilla/5.0"}
+            )
+            with urllib.request.urlopen(req, timeout=3) as resp:
+                print(f"[5WALLET] Successfully notified API endpoint: {url}")
+        except Exception as e:
             pass
-    except Exception as e:
-        print(f"[!] Master Server Wallet API Notification warning: {e}")
 
     embed = discord.Embed(
         title="💳 WALLET BALANCE CREDITED",
         color=0x00E676,
         description=f"Successfully added **${amount:.2f} USD** to user wallet!"
     )
-    embed.add_field(name="👤 Target User", value=f"**{target_name}** (<@{target_id}>)", inline=True)
-    embed.add_field(name="🆔 Discord ID", value=f"`{target_id}`", inline=True)
+    embed.add_field(name="👤 Target User", value=f"**{target_name}** (`{target_id}`)", inline=True)
     embed.add_field(name="💵 Added Balance", value=f"**+${amount:.2f} USD**", inline=True)
     embed.add_field(name="🛡️ Admin", value=f"`{ctx.author.name}`", inline=False)
-    embed.set_footer(text="Nigga Finder v2 · Wallet Management System")
+    embed.set_footer(text="Nigga Notifier v2 · Wallet Management System")
 
     await ctx.send(embed=embed)
     print(f"[5WALLET] ${amount:.2f} credited to {target_name} ({target_id}) by {ctx.author.name}")
