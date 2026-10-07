@@ -16,7 +16,7 @@ sys.stdout.reconfigure(encoding='utf-8')
 import os
 
 # --- CONFIGURATION BOT DISCORD ---
-BOT_TOKEN = "MTU1NzE0MzUxODIwMjMwMjU3Nw.G_JjYi.lnSScMnEy3CCw2uOOeIIo-Jr-PKqmuyu4TQ37g"
+BOT_TOKEN = os.environ.get("DISCORD_BOT_TOKEN", "MTU1NzE0MzUxODIwMjMwMjU3Nw.G8to_O.4ALhxhv3JMKVTL77ajlvCfT7GZx5GXxNwLA6bY")
 CLIENT_ID = "1557143518202302577"
 SERVER_API_URL = os.environ.get("SERVER_API_URL", "https://aj-sab.onrender.com/api/add_wallet")
 
