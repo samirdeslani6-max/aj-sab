@@ -14,7 +14,7 @@ local CoreGui          = game:GetService("CoreGui")
 local LocalPlayer      = Players.LocalPlayer or Players.PlayerAdded:Wait()
 
 -- ── CONFIGURATION ──────────────────────────────────────────────
-local WS_URL           = "ws://localhost:8081" -- WebSocket port (Master Python Server)
+local WS_URL           = "wss://aj-sab.onrender.com/ws" -- Pour Render (ou "ws://localhost:8080/ws" en local)
 local PING_INTERVAL    = 25                   -- Keepalive interval
 local RECONNECT_DELAY  = 5                    -- Reconnection wait delay
 local AJ_ACTIVE        = true                 -- Auto-Join state

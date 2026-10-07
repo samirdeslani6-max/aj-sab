@@ -1,12 +1,10 @@
 import sys
+import os
 import asyncio
 import json
-import http.server
-import socketserver
-import threading
 import urllib.request
-import websockets
 import time
+from aiohttp import web, WSMsgType
 
 sys.stdout.reconfigure(encoding='utf-8')
 
@@ -597,77 +595,6 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 </html>"""
 
 # ================================================================
-# HTTP SERVER HANDLER
-# ================================================================
-class DashboardHTTPHandler(http.server.SimpleHTTPRequestHandler):
-    def do_GET(self):
-        client_ip = self.client_address[0]
-        if client_ip not in ALLOWED_IPS and client_ip != "127.0.0.1":
-            self.send_error(403, "Access Denied.")
-            return
-
-        self.send_response(200)
-        self.send_header("Content-Type", "text/html; charset=utf-8")
-        self.end_headers()
-        self.wfile.write(DASHBOARD_HTML.encode("utf-8"))
-
-    def do_POST(self):
-        if self.path == "/api/payment_notify":
-            content_length = int(self.headers.get('Content-Length', 0))
-            post_data = self.rfile.read(content_length)
-            try:
-                data = json.loads(post_data.decode('utf-8'))
-                user = data.get("discord_user", "Unknown")
-                plan = data.get("plan", "PRO")
-                duration = data.get("duration_hours", 1)
-                price = data.get("price", 8)
-                crypto = data.get("crypto", "BTC")
-                tx_hash = data.get("tx_hash", "0x0000")
-
-                send_discord_payment_notification(user, plan, duration, price, crypto, tx_hash)
-
-                self.send_response(200)
-                self.send_header("Content-Type", "application/json")
-                self.end_headers()
-                self.wfile.write(json.dumps({"status": "ok"}).encode('utf-8'))
-                return
-            except Exception as e:
-                print(f"[!] Error Payment API: {e}")
-                self.send_error(500, str(e))
-                return
-
-        elif self.path == "/api/add_wallet":
-            content_length = int(self.headers.get('Content-Length', 0))
-            post_data = self.rfile.read(content_length)
-            try:
-                data = json.loads(post_data.decode('utf-8'))
-                user_id = data.get("user_id")
-                username = data.get("username", "Unknown")
-                amount = data.get("amount", 0.0)
-                admin = data.get("admin", "Admin")
-
-                print(f"[WALLET API] Added ${amount:.2f} USD to user {username} (ID: {user_id}) by admin {admin}")
-
-                self.send_response(200)
-                self.send_header("Content-Type", "application/json")
-                self.end_headers()
-                self.wfile.write(json.dumps({"status": "ok", "message": "Wallet balance credited successfully"}).encode('utf-8'))
-                return
-            except Exception as e:
-                print(f"[!] Error Wallet API: {e}")
-                self.send_error(500, str(e))
-                return
-
-        self.send_error(404, "Not Found")
-
-    def log_message(self, format, *args):
-        pass
-
-def start_http_dashboard():
-    with socketserver.TCPServer(("0.0.0.0", 8080), DashboardHTTPHandler) as httpd:
-        httpd.serve_forever()
-
-# ================================================================
 # DISCORD NOTIFICATIONS
 # ================================================================
 OG_KEYWORDS = {"dragon", "secret", "celestial", "hydra", "headless", "phoenix", "kraken", "cerberus", "eviledon", "la secret combinasion", "los secret combinasionas", "og", "rainbow", "dark matter", "galaxy"}
@@ -738,7 +665,7 @@ def send_discord_payment_notification(user_tag, plan, duration, price, crypto, t
         print(f"[!] Payment Webhook Error: {e}")
 
 # ================================================================
-# WEBSOCKET MASTER SERVER
+# AIOHTTP SERVER (COMBINED DASHBOARD HTTP & WEBSOCKET MASTER)
 # ================================================================
 async def broadcast_dashboard_update(log_text="", tier="PETIT", steal_obj=None):
     payload = json.dumps({
@@ -750,91 +677,133 @@ async def broadcast_dashboard_update(log_text="", tier="PETIT", steal_obj=None):
         "steal_data": steal_obj
     })
     for client in list(CLIENTS):
-        try: await client.send(payload)
-        except: pass
+        try:
+            await client.send_str(payload)
+        except Exception:
+            pass
 
-async def handler(websocket):
-    client_ip = websocket.remote_address[0]
-    if client_ip not in ALLOWED_IPS and client_ip != "127.0.0.1":
-        await websocket.close()
-        return
+async def websocket_handler(request):
+    ws = web.WebSocketResponse()
+    await ws.prepare(request)
 
-    CLIENTS.add(websocket)
+    CLIENTS.add(ws)
+    client_ip = request.remote
     print(f"[+] Client Connected ({client_ip}) | Total: {len(CLIENTS)}")
     await broadcast_dashboard_update(f"Client connected (Total: {len(CLIENTS)})")
 
     try:
-        async for message in websocket:
-            try:
-                data = json.loads(message)
-                msg_type = data.get("t")
+        async for message in ws:
+            if message.type == WSMsgType.TEXT:
+                try:
+                    data = json.loads(message.data)
+                    msg_type = data.get("t")
 
-                if msg_type == "ping":
-                    await websocket.send(json.dumps({"t": "pong"}))
+                    if msg_type == "ping":
+                        await ws.send_str(json.dumps({"t": "pong"}))
 
-                elif msg_type == "auth_key":
-                    key = data.get("key")
-                    # Key validity check
-                    if key and "NIGGA" in key:
-                        await websocket.send(json.dumps({"t": "auth_success", "status": "valid"}))
-                    else:
-                        await websocket.send(json.dumps({"t": "key_expired", "reason": "Invalid key or expired"}))
+                    elif msg_type == "auth_key":
+                        key = data.get("key")
+                        if key and "NIGGA" in key:
+                            await ws.send_str(json.dumps({"t": "auth_success", "status": "valid"}))
+                        else:
+                            await ws.send_str(json.dumps({"t": "key_expired", "reason": "Invalid key or expired"}))
 
-                elif msg_type == "notify_target":
-                    job_id = data.get("jobId", "Unknown")
-                    place_id = data.get("placeId", 0)
-                    info = data.get("info", {})
-                    
-                    animal = info.get("animal", "Unknown Animal")
-                    mutation = info.get("mutation", "")
-                    stealer = info.get("stealer", "Unknown")
+                    elif msg_type == "notify_target":
+                        job_id = data.get("jobId", "Unknown")
+                        place_id = data.get("placeId", 0)
+                        info = data.get("info", {})
 
-                    tier, webhook_url, color = classify_target(animal, mutation)
-                    send_discord_webhook(webhook_url, animal, mutation, stealer, job_id, place_id, tier, color)
+                        animal = info.get("animal", "Unknown Animal")
+                        mutation = info.get("mutation", "")
+                        stealer = info.get("stealer", "Unknown")
 
-                    STATS["total_steals"] += 1
-                    if tier == "OG": STATS["og_steals"] += 1
-                    if tier == "SUPER": STATS["super_steals"] += 1
+                        tier, webhook_url, color = classify_target(animal, mutation)
+                        send_discord_webhook(webhook_url, animal, mutation, stealer, job_id, place_id, tier, color)
 
-                    steal_obj = {
-                        "id": str(time.time()),
-                        "animal": animal,
-                        "mutation": mutation,
-                        "stealer": str(stealer),
-                        "jobId": job_id,
-                        "placeId": place_id,
-                        "tier": tier,
-                        "time": time.strftime("%H:%M:%S")
-                    }
+                        STATS["total_steals"] += 1
+                        if tier == "OG": STATS["og_steals"] += 1
+                        if tier == "SUPER": STATS["super_steals"] += 1
 
-                    # Broadcast steal to Roblox Lua Auto-Joiners & Web Dashboard
-                    broadcast_payload = json.dumps({
-                        "t": "join_target",
-                        "jobId": job_id,
-                        "placeId": place_id,
-                        "animal": animal,
-                        "mutation": mutation
-                    })
+                        steal_obj = {
+                            "id": str(time.time()),
+                            "animal": animal,
+                            "mutation": mutation,
+                            "stealer": str(stealer),
+                            "jobId": job_id,
+                            "placeId": place_id,
+                            "tier": tier,
+                            "time": time.strftime("%H:%M:%S")
+                        }
 
-                    for client in list(CLIENTS):
-                        try: await client.send(broadcast_payload)
-                        except: pass
+                        broadcast_payload = json.dumps({
+                            "t": "join_target",
+                            "jobId": job_id,
+                            "placeId": place_id,
+                            "animal": animal,
+                            "mutation": mutation
+                        })
 
-                    await broadcast_dashboard_update(f"Steal Detected: {animal} ({tier})", tier=tier, steal_obj=steal_obj)
+                        for client in list(CLIENTS):
+                            try:
+                                await client.send_str(broadcast_payload)
+                            except Exception:
+                                pass
 
-            except Exception as e:
-                print(f"[!] WebSocket message error: {e}")
+                        await broadcast_dashboard_update(f"Steal Detected: {animal} ({tier})", tier=tier, steal_obj=steal_obj)
+
+                except Exception as e:
+                    print(f"[!] WebSocket message error: {e}")
+            elif message.type == WSMsgType.ERROR:
+                print(f"[!] WebSocket error: {ws.exception()}")
     finally:
-        CLIENTS.remove(websocket)
+        CLIENTS.remove(ws)
+        print(f"[-] Client Disconnected ({client_ip}) | Total: {len(CLIENTS)}")
+        await broadcast_dashboard_update(f"Client disconnected (Total: {len(CLIENTS)})")
 
-async def main_ws():
-    async with websockets.serve(handler, "0.0.0.0", 8081):
-        await asyncio.Future()
+    return ws
+
+async def handle_dashboard(request):
+    if request.headers.get("Upgrade", "").lower() == "websocket":
+        return await websocket_handler(request)
+    return web.Response(text=DASHBOARD_HTML, content_type="text/html", charset="utf-8")
+
+async def handle_payment_notify(request):
+    try:
+        data = await request.json()
+        user = data.get("discord_user", "Unknown")
+        plan = data.get("plan", "PRO")
+        duration = data.get("duration_hours", 1)
+        price = data.get("price", 8)
+        crypto = data.get("crypto", "BTC")
+        tx_hash = data.get("tx_hash", "0x0000")
+
+        send_discord_payment_notification(user, plan, duration, price, crypto, tx_hash)
+        return web.json_response({"status": "ok"})
+    except Exception as e:
+        print(f"[!] Error Payment API: {e}")
+        return web.json_response({"error": str(e)}, status=500)
+
+async def handle_add_wallet(request):
+    try:
+        data = await request.json()
+        user_id = data.get("user_id")
+        username = data.get("username", "Unknown")
+        amount = data.get("amount", 0.0)
+        admin = data.get("admin", "Admin")
+
+        print(f"[WALLET API] Added ${amount:.2f} USD to user {username} (ID: {user_id}) by admin {admin}")
+        return web.json_response({"status": "ok", "message": "Wallet balance credited successfully"})
+    except Exception as e:
+        print(f"[!] Error Wallet API: {e}")
+        return web.json_response({"error": str(e)}, status=500)
 
 if __name__ == "__main__":
-    http_thread = threading.Thread(target=start_http_dashboard, daemon=True)
-    http_thread.start()
-    print("[+] HTTP Dashboard online on port 8080")
-    print("[+] WebSocket Master online on port 8081")
+    port = int(os.environ.get("PORT", 8080))
+    app = web.Application()
+    app.router.add_get('/', handle_dashboard)
+    app.router.add_get('/ws', websocket_handler)
+    app.router.add_post('/api/payment_notify', handle_payment_notify)
+    app.router.add_post('/api/add_wallet', handle_add_wallet)
 
-    asyncio.run(main_ws())
+    print(f"[+] Server online on port {port} (Combined HTTP Dashboard & WebSocket Master)")
+    web.run_app(app, host="0.0.0.0", port=port)
