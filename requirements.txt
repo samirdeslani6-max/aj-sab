@@ -1,3 +1,4 @@
 websockets
 discord.py
 aiohttp
+typing-extensions
