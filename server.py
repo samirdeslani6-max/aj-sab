@@ -101,14 +101,14 @@ return (function(...)
     local {var_payload} = {{{byte_str}}}
     local {var_key} = {xor_key}
     local {var_decrypt} = ""
+    local bxor = (bit32 and bit32.bxor) or (bit and bit.bxor) or function(a, b) return a end
     for i = 1, #{var_payload} do
-        {var_decrypt} = {var_decrypt} .. string.char(bit32 and bit32.bxor({var_payload}[i], {var_key}) or ({var_payload}[i] ~ {var_key}))
+        {var_decrypt} = {var_decrypt} .. string.char(bxor({var_payload}[i], {var_key}))
     end
-    local {var_env} = getfenv or function() return _ENV end
     local load_fn = loadstring or load
     local compiled, err = load_fn({var_decrypt}, "NiggaNotifierEngine")
     if not compiled then
-        error("[NiggaNotifier] VM Tamper Detected: " .. tostring(err))
+        error("[NiggaNotifier] Protection error: " .. tostring(err))
     end
     return compiled(...)
 end)(...)"""
@@ -1238,22 +1238,21 @@ async def handle_buy_key(request):
 async def handle_get_script(request):
     user_key = request.query.get("key", "").strip()
 
-    # If no key parameter or default free key passed
-    if not user_key or user_key.upper() == "NIGGA-FREE-KEY-2026":
-        is_valid = True
-        user_key = "NIGGA-FREE-KEY-2026"
-    else:
-        keys_db = load_user_keys()
-        # Direct lookup or case-insensitive search
-        key_info = keys_db.get(user_key) or keys_db.get(user_key.upper())
-        if not key_info:
-            key_info = next((v for k, v in keys_db.items() if k.upper() == user_key.upper()), None)
+    if not user_key:
+        error_lua = 'error("[Nigga Notifier] KEY REQUIRED! Rent a subscription key at https://aj-sab.onrender.com")'
+        return web.Response(text=error_lua, content_type="text/plain", charset="utf-8")
 
-        if not key_info:
-            is_valid = False
-        else:
-            expires_at = key_info.get("expires_at", 0)
-            is_valid = time.time() <= expires_at
+    keys_db = load_user_keys()
+    # Case-insensitive lookup
+    key_info = keys_db.get(user_key) or keys_db.get(user_key.upper())
+    if not key_info:
+        key_info = next((v for k, v in keys_db.items() if k.upper() == user_key.upper()), None)
+
+    if not key_info:
+        is_valid = False
+    else:
+        expires_at = key_info.get("expires_at", 0)
+        is_valid = time.time() <= expires_at
 
     if not is_valid:
         error_lua = 'error("[Nigga Notifier] INVALID OR EXPIRED KEY! Rent a valid subscription key at https://aj-sab.onrender.com")'
