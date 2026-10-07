@@ -408,7 +408,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                         });
                         setShowKeyModal(true);
                     } else {
-                        alert(`❌ Key Purchase Error: ${data.error || 'Insufficient balance or server issue.'}`);
+                        alert(`❌ Key Purchase Error: ${data.message || data.error || 'Insufficient balance or server issue.'}`);
                     }
                 } catch(e) {
                     alert("❌ Connection error while processing key purchase.");
@@ -1173,8 +1173,8 @@ async def handle_submit_deposit(request):
 async def handle_buy_key(request):
     try:
         data = await request.json()
-        user_id = str(data.get("discord_id", ""))
-        username = str(data.get("discord_user", "Unknown"))
+        user_id = str(data.get("user_id", data.get("discord_id", ""))).strip()
+        username = str(data.get("username", data.get("discord_user", "Unknown"))).strip()
         plan = str(data.get("plan", "PRO")).upper()
         hours = int(data.get("hours", 1))
 
@@ -1183,8 +1183,8 @@ async def handle_buy_key(request):
         total_price = price_per_hour * hours
 
         wallets = load_wallets()
-        key_user = user_id if user_id and user_id != "Unknown" else username
-        current_bal = wallets.get(key_user, 0.0)
+        # Lookup balance by user_id or username
+        current_bal = wallets.get(user_id, wallets.get(username, 0.0))
 
         if current_bal < total_price:
             return web.json_response({
@@ -1192,10 +1192,11 @@ async def handle_buy_key(request):
                 "message": f"Insufficient Wallet Balance! You need ${total_price:.2f} USD to rent {plan} ({hours}h). Current balance: ${current_bal:.2f} USD."
             }, status=400)
 
-        # Deduct balance
+        # Deduct balance from all matching keys (user_id and username)
         new_bal = current_bal - total_price
-        wallets[key_user] = new_bal
-        if username and username != key_user:
+        if user_id:
+            wallets[user_id] = new_bal
+        if username and username != "Unknown":
             wallets[username] = new_bal
         save_wallets(wallets)
 
